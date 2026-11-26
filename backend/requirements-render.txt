@@ -1,0 +1,196 @@
+# =============================================================================
+# BeyondGPT — Production Requirements for Render Free (Python 3.13 / Linux)
+# =============================================================================
+# Generated: 2026-11-27
+# Source:    Frozen from backend/.venv (pip list --format=freeze)
+# Strategy:  Exact versions pinned; PyTorch + sentence-transformers tree
+#            excluded because the production reranker uses FastEmbed ONNX.
+#            Windows-only, dev, and test packages also excluded.
+#
+# EXCLUDED packages and reasons:
+#   torch==2.15.0               – PyTorch; replaced by ONNX runtime
+#   sentence-transformers==6.3.0 – PyTorch-based reranker; replaced by fastembed
+#   transformers==5.24.1        – Required only by sentence-transformers
+#   safetensors==0.8.0          – Required only by transformers
+#   sympy==1.14.0               – Required only by torch
+#   mpmath==1.3.0               – Required only by sympy
+#   networkx==3.7               – Required only by torch
+#   scikit-learn==1.9.1         – Required only by sentence-transformers
+#   scipy==1.18.1               – Required only by sentence-transformers/scikit-learn
+#   threadpoolctl==3.6.0        – Required only by scikit-learn
+#   joblib==1.6.0               – Required only by scikit-learn
+#   cloudpickle==3.1.3          – Required only by joblib
+#   narwhals==2.29.0            – Required only by scikit-learn
+#   typer==0.29.2               – Required only by transformers (not in app code)
+#   shellingham==1.5.4          – Required only by typer
+#   pywin32==312                – Windows-only; not available on Linux
+#   win32-setctime==1.2.1       – Windows-only
+#   colorama==0.4.6             – Windows-only ANSI; not needed on Linux
+#   truststore==0.10.5          – Windows cert store; irrelevant on Linux
+#   hf-xet==1.8.0               – Optional Hugging Face Xet storage driver
+#   watchfiles==1.3.0           – uvicorn --reload dev mode only
+#   httptools==0.9.0            – uvicorn --reload dev mode only
+#   h2==4.4.1                   – HTTP/2 extras; not used by any app path
+#   hpack==4.2.0                – Required only by h2
+#   hyperframe==6.1.0           – Required only by h2
+#   grandalf==0.8               – LangGraph graph-drawing util; not used in prod
+#   pyparsing==3.3.3            – Required only by grandalf
+#   pytest==9.2.0               – Test-only
+#   pytest-asyncio==1.5.0       – Test-only
+#   iniconfig==2.3.1            – Required only by pytest
+#   pluggy==1.7.0               – Required only by pytest
+#   ruff==0.17.6                – Linter; dev-only
+# =============================================================================
+
+# --- FastAPI + ASGI server ---
+fastapi==0.165.0
+uvicorn==0.54.0
+starlette==1.10.0
+python-multipart==0.0.34
+sse-starlette==3.7.1
+anyio==4.16.0
+h11==0.16.0
+sniffio==1.3.1
+
+# --- Pydantic + settings ---
+pydantic==2.14.4
+pydantic_core==2.50.5
+pydantic-settings==2.16.3
+annotated-types==0.8.0
+annotated-doc==0.0.7
+typing_extensions==4.16.0
+typing-inspection==0.4.5
+python-dotenv==1.2.4
+
+# --- LangChain ecosystem ---
+langchain==1.5.2
+langchain-core==1.8.4
+langchain-classic==1.1.0
+langchain-community==0.4.2
+langchain-text-splitters==1.2.0
+langchain-groq==1.2.1
+langchain-qdrant==1.1.0
+langchain-protocol==0.0.22
+
+# --- LangGraph ---
+langgraph==1.2.24
+langgraph-checkpoint==4.3.2
+langgraph-prebuilt==1.1.3
+langgraph-sdk==0.4.14
+
+# --- LangSmith (required by langchain-core) ---
+langsmith==0.16.2
+
+# --- Groq LLM client ---
+groq==1.7.0
+
+# --- Qdrant vector database ---
+qdrant-client==1.20.0
+grpcio==1.85.4
+portalocker==3.2.0
+protobuf==7.36.2
+
+# --- FastEmbed ONNX embeddings + reranker (production path) ---
+fastembed==0.9.1
+onnxruntime==1.32.0
+numpy==2.5.5
+mmh3==5.3.1
+py_rust_stemmers==0.1.8
+flatbuffers==25.12.19
+
+# --- Hugging Face Hub (model download; required by fastembed + tokenizers) ---
+huggingface_hub==1.33.0
+tokenizers==0.23.3
+filelock==4.3.1
+fsspec==2026.9.0
+tqdm==4.70.1
+
+# --- BM25 hybrid search ---
+rank-bm25==0.2.2
+
+# --- PDF ingestion ---
+pdfplumber==0.11.11
+pdfminer.six==20260107
+pypdfium2==5.15.2
+pypdf==7.1.1
+pillow==13.0.0
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
+charset-normalizer==3.5.3
+
+# --- DOCX ingestion ---
+python-docx==1.2.0
+lxml==6.1.3
+
+# --- Web ingestion ---
+beautifulsoup4==4.15.0
+soupsieve==4.1.3
+markdownify==1.2.4
+
+# --- GitHub ingestion ---
+GitPython==3.2.1
+gitdb==4.0.12
+smmap==5.0.3
+PyGithub==2.10.0
+PyJWT==2.15.1
+PyNaCl==1.6.2
+
+# --- Code parsing (GitHub/codebase agent) ---
+tree-sitter==0.27.0
+tree-sitter-language-pack==1.25.2
+
+# --- HTTP clients ---
+httpx==0.28.1
+httpcore==1.0.9
+httpx2==2.16.2
+httpcore2==2.16.2
+requests==2.34.2
+requests-toolbelt==1.0.0
+urllib3==2.8.0
+idna==3.20
+certifi==2026.11.20
+
+# --- Async HTTP (langchain-community dependency) ---
+aiohttp==3.14.5
+aiosignal==1.4.0
+frozenlist==1.8.0
+multidict==7.2.1
+yarl==1.25.1
+attrs==26.1.0
+propcache==0.5.4
+aiohappyeyeballs==2.7.1
+httpx-sse==0.4.3
+
+# --- LangChain/LangSmith shared utilities ---
+jsonpatch==1.48
+jsonpointer==3.12
+orjson==3.13.0
+ormsgpack==1.13.1
+xxhash==4.1.0
+uuid_utils==0.19.0
+websockets==17.4
+SQLAlchemy==2.1.9
+PyYAML==6.0.4
+packaging==26.4
+regex==2026.11.24
+click==8.5.1
+distro==1.9.0
+
+# --- Token counting ---
+tiktoken==0.14.0
+
+# --- Logging ---
+structlog==26.1.0
+loguru==0.7.3
+rich==15.0.0
+markdown-it-py==4.3.0
+mdurl==0.1.2
+Pygments==2.21.0
+
+# --- Misc utilities ---
+tenacity==9.2.1
+Jinja2==3.1.6
+MarkupSafe==3.0.4
+opentelemetry-api==1.45.2
+zstandard==0.25.0

@@ -1,0 +1,65 @@
+# Backend API
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# Environment variables
+python-dotenv
+
+# AI Framework
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-groq
+
+# Agent Orchestration
+langgraph
+
+# Vector Database
+qdrant-client
+langchain-qdrant
+
+# Embeddings
+fastembed
+
+# Hybrid Search
+rank-bm25
+
+# Document Processing
+pypdf
+pdfplumber
+python-docx
+beautifulsoup4
+lxml
+markdownify
+
+# GitHub & Codebase Ingestion
+GitPython
+PyGithub
+tree-sitter
+tree-sitter-language-pack
+
+# HTTP Requests & Resilience
+httpx
+requests
+tenacity
+orjson
+
+# Streaming Responses
+sse-starlette
+
+# Logging & Utilities
+structlog
+rich
+tiktoken
+
+# Testing & Code Quality
+pytest
+pytest-asyncio
+ruff
+
+
+sentence-transformers

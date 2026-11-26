@@ -1,0 +1,38 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python virtual environments & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Frontend dependencies & build outputs
+node_modules/
+dist/
+dist-ssr/
+.dist/
+
+# Uploaded documents & temporary files
+backend/uploads/
+backend/temp/
+
+# Local Qdrant / database files
+qdrant_storage/
+*.db
+*.sqlite
+*.sqlite3
+
+# Model & tool caches
+.cache/
+fastembed_cache/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
