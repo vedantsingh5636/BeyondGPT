@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   buildRequestHistory,
+  normalizeApiBaseUrl,
   parseMarkdownBlocks,
   parseSseChunk,
   prepareMarkdownWithSources,
@@ -149,6 +150,51 @@ test('uploadDocumentRequest handles success, errors, and browser timeout safely'
         }),
     }),
     /timed out in the browser.*finish indexing on the server/i
+  )
+
+  assert.equal(normalizeApiBaseUrl(' https://example.com/// '), 'https://example.com')
+
+  let requestedUrl = null
+  await uploadDocumentRequest({
+    apiBaseUrl: 'https://beyondgpt-backend.onrender.com/',
+    file: fakeFile,
+    timeoutMs: 500,
+    fetchImpl: async (url) => {
+      requestedUrl = url
+      return {
+        ok: true,
+        json: async () => ({ filename: 'report.pdf', chunks_created: 1, duplicate: false }),
+      }
+    },
+  })
+  assert.equal(requestedUrl, 'https://beyondgpt-backend.onrender.com/upload')
+
+  await assert.rejects(
+    uploadDocumentRequest({
+      apiBaseUrl: 'https://beyondgpt-backend.onrender.com',
+      file: fakeFile,
+      timeoutMs: 500,
+      fetchImpl: async () => {
+        throw new TypeError('Failed to fetch')
+      },
+    }),
+    /Unable to reach the upload server/i
+  )
+
+  await assert.rejects(
+    uploadDocumentRequest({
+      apiBaseUrl: 'https://beyondgpt-backend.onrender.com',
+      file: fakeFile,
+      timeoutMs: 500,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        json: async () => {
+          throw new Error('non-json')
+        },
+      }),
+    }),
+    /HTTP 503/
   )
 })
 

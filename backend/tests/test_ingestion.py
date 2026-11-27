@@ -239,6 +239,7 @@ def test_ingest_document_end_to_end_preserves_source_and_page(tmp_path: Path):
 
 
 def test_upload_endpoint_preserves_contract_and_handles_errors(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(upload_api, "find_document_by_hash", lambda h: None)
     monkeypatch.setattr(upload_api, "save_uploaded_file", lambda filename, content: _save_tmp(tmp_path, filename, content))
     mock_store = MagicMock()
     monkeypatch.setattr(upload_api, "create_vector_store", lambda: mock_store)

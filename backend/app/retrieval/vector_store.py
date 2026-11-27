@@ -81,6 +81,27 @@ def check_qdrant_health(client: QdrantClient | None = None) -> dict[str, object]
         }
 
 
+_PAYLOAD_INDEX_FIELDS = (
+    "metadata.file_hash",
+    "metadata.document_id",
+    "metadata.filename",
+    "metadata.source",
+)
+
+
+def _ensure_payload_indexes(client: QdrantClient) -> None:
+    """Create missing metadata keyword payload indexes without overwriting existing ones."""
+    for field_name in _PAYLOAD_INDEX_FIELDS:
+        try:
+            client.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name=field_name,
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        except (ApiException, ValueError, RuntimeError) as exc:
+            logger.debug("Skipping payload index creation for %s: %s", field_name, exc)
+
+
 def ensure_collection_exists(client: QdrantClient) -> None:
     """Create the Qdrant collection and metadata payload indexes if missing.
 
@@ -100,20 +121,7 @@ def ensure_collection_exists(client: QdrantClient) -> None:
             ),
         )
 
-    for field_name in (
-        "metadata.file_hash",
-        "metadata.document_id",
-        "metadata.filename",
-        "metadata.source",
-    ):
-        try:
-            client.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name=field_name,
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-        except (ApiException, ValueError, RuntimeError) as exc:
-            logger.debug("Skipping payload index creation for %s: %s", field_name, exc)
+    _ensure_payload_indexes(client)
 
     with _cache_lock:
         _initialized_client_ids.add(client_id)
@@ -154,6 +162,8 @@ def find_document_by_hash(
     qdrant = client or get_qdrant_client()
     if not qdrant.collection_exists(COLLECTION_NAME):
         return None
+
+    ensure_collection_exists(qdrant)
 
     records, _ = qdrant.scroll(
         collection_name=COLLECTION_NAME,

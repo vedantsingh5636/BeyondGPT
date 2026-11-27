@@ -42,7 +42,8 @@ def test_expensive_models_and_client_are_cached(monkeypatch):
         e1 = embeddings_module.get_embeddings()
         e2 = embeddings_module.get_embeddings()
         assert e1 is e2
-        assert e1.batch_size == 64
+        assert e1.batch_size == 32
+        assert e1.threads == 1
         assert emb_calls == 1
 
         r1 = reranker_module.get_reranker()

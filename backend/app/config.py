@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION_NAME: str = "rag_documents"
-    QDRANT_TIMEOUT_SECONDS: float = 5.0
+    QDRANT_TIMEOUT_SECONDS: float = 15.0
     GROQ_TIMEOUT_SECONDS: float = 30.0
     UPLOAD_DIR: str | None = None
     MAX_UPLOAD_SIZE_MB: int = 10

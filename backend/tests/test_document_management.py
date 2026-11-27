@@ -314,6 +314,54 @@ def test_hybrid_search_retrieves_across_multiple_docs_without_duplicates(monkeyp
     assert "alpha.pdf" in sources
 
 
+def test_find_document_by_hash_ordering_preserves_collection_and_avoids_duplicates():
+    missing_client = _FakeQdrantClient(collection_exists=False)
+    assert vs_module.find_document_by_hash("abc123", client=missing_client) is None
+    assert missing_client.created_collections == []
+    assert missing_client.payload_indexes == []
+
+    existing_record = {
+        "id": "existing-1",
+        "page_content": "Existing content",
+        "metadata": {"source": "existing.pdf", "file_hash": "hash-existing"},
+    }
+    ordered_events: list[str] = []
+
+    class _OrderedFakeQdrantClient(_FakeQdrantClient):
+        def create_payload_index(self, collection_name: str, field_name: str, field_schema=None) -> None:
+            ordered_events.append(f"index:{field_name}")
+            super().create_payload_index(collection_name, field_name, field_schema)
+
+        def scroll(self, *args, **kwargs):
+            ordered_events.append("scroll")
+            return super().scroll(*args, **kwargs)
+
+    existing_client = _OrderedFakeQdrantClient(
+        initial_records=[existing_record],
+        collection_exists=True,
+    )
+    vs_module._initialized_client_ids.discard(id(existing_client))
+
+    found = vs_module.find_document_by_hash("hash-existing", client=existing_client)
+    assert found is not None
+    assert found["source"] == "existing.pdf"
+    assert existing_client.created_collections == []
+    assert existing_client.deleted_collections == []
+    assert "existing-1" in existing_client.records
+    assert ordered_events[:4] == [
+        "index:metadata.file_hash",
+        "index:metadata.document_id",
+        "index:metadata.filename",
+        "index:metadata.source",
+    ]
+    assert ordered_events[4] == "scroll"
+
+    # Subsequent lookup and ensure_collection_exists reuse initialization cache without duplicate indexes
+    assert vs_module.find_document_by_hash("hash-missing", client=existing_client) is None
+    vs_module.ensure_collection_exists(existing_client)
+    assert len(existing_client.payload_indexes) == 4
+
+
 def test_add_documents_batched_uses_64_and_falls_back_for_simple_doubles():
     captured: list[tuple] = []
 

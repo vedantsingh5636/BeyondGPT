@@ -3,13 +3,16 @@ import './App.css'
 import MarkdownRenderer from './components/MarkdownRenderer'
 import {
   buildRequestHistory,
+  normalizeApiBaseUrl,
   parseSseChunk,
   safeLoadChats,
   UPLOAD_TIMEOUT_MS,
   uploadDocumentRequest,
 } from './utils/chatHelpers'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const API_BASE_URL = normalizeApiBaseUrl(
+  import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+)
 
 const createChatId = () => Date.now()
 

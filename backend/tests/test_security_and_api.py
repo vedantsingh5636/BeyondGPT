@@ -151,6 +151,33 @@ def test_upload_cleans_up_temp_file_on_qdrant_outage(tmp_path: Path, monkeypatch
     assert list((tmp_path / "uploads").glob("*")) == []
 
 
+def test_upload_handles_file_save_error_with_cors_and_qdrant_timeout_default(tmp_path: Path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings
+
+    assert Settings.model_fields["QDRANT_TIMEOUT_SECONDS"].default == 15.0
+
+    monkeypatch.setattr(upload_api, "_run_blocking", _sync_run)
+    monkeypatch.setattr(upload_api, "find_document_by_hash", lambda h: None)
+
+    def failing_save(filename: str, content: bytes) -> str:
+        raise PermissionError("Read-only upload directory")
+
+    monkeypatch.setattr(upload_api, "save_uploaded_file", failing_save)
+
+    client = TestClient(main_module.app)
+    resp = client.post(
+        "/upload",
+        headers={"Origin": "http://localhost:5173"},
+        files={"file": ("doc.pdf", _valid_pdf_bytes(), "application/pdf")},
+    )
+
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Failed to save uploaded file."
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
 def test_ssrf_protection_blocks_internal_targets_and_allows_public_urls(monkeypatch):
     for bad_url in (
         "file:///etc/passwd",

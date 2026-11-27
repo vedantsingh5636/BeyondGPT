@@ -9,28 +9,36 @@ const KEYWORDS = new Set([
 
 export const UPLOAD_TIMEOUT_MS = 180000
 
+export function normalizeApiBaseUrl(apiBaseUrl) {
+  if (typeof apiBaseUrl !== 'string') return ''
+  return apiBaseUrl.trim().replace(/\/+$/, '')
+}
+
 export async function uploadDocumentRequest({
   apiBaseUrl,
   file,
   fetchImpl = fetch,
   timeoutMs = UPLOAD_TIMEOUT_MS,
 }) {
+  const baseUrl = normalizeApiBaseUrl(apiBaseUrl)
   const formData = new FormData()
   formData.append('file', file)
 
   const controller = new AbortController()
   let timedOut = false
+  let receivedResponse = false
   const timerId = setTimeout(() => {
     timedOut = true
     controller.abort()
   }, timeoutMs)
 
   try {
-    const response = await fetchImpl(`${apiBaseUrl}/upload`, {
+    const response = await fetchImpl(`${baseUrl}/upload`, {
       method: 'POST',
       body: formData,
       signal: controller.signal,
     })
+    receivedResponse = true
 
     let data = null
     try {
@@ -40,7 +48,12 @@ export async function uploadDocumentRequest({
     }
 
     if (!response.ok) {
-      throw new Error(data?.detail || 'File upload failed.')
+      throw new Error(
+        data?.detail ||
+          (response.status
+            ? `File upload failed (HTTP ${response.status}).`
+            : 'File upload failed.')
+      )
     }
 
     return data
@@ -48,6 +61,11 @@ export async function uploadDocumentRequest({
     if (timedOut || error?.name === 'AbortError') {
       throw new Error(
         'Upload request timed out in the browser after 3 minutes. Large documents may still finish indexing on the server — please verify before re-uploading.'
+      )
+    }
+    if (!receivedResponse) {
+      throw new Error(
+        'Unable to reach the upload server. The backend may be waking up or temporarily unavailable — please try again shortly.'
       )
     }
     throw error

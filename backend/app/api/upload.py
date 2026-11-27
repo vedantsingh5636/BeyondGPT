@@ -163,10 +163,24 @@ async def upload_document(file: Annotated[UploadFile, File()]):
             "file_hash": file_hash,
         }
 
-    file_path = save_uploaded_file(
-        filename=safe_filename,
-        content=content,
-    )
+    try:
+        file_path = await _run_blocking(
+            save_uploaded_file,
+            filename=safe_filename,
+            content=content,
+        )
+    except OSError as exc:
+        logger.exception("Failed to save uploaded file '%s': %s", safe_filename, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save uploaded file.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error saving uploaded file '%s': %s", safe_filename, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save uploaded file.",
+        ) from exc
 
     try:
         chunks_created = await _run_blocking(
