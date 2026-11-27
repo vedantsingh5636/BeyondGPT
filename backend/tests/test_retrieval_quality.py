@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from app.retrieval import bm25_search as bm25_module
 from app.retrieval import embeddings as embeddings_module
 from app.retrieval import hybrid_search as hybrid_module
+from app.retrieval import model_lifecycle as lifecycle_module
 from app.retrieval import reranker as reranker_module
 from app.retrieval import retrieval_pipeline as pipeline_module
 from app.retrieval import vector_store as vs_module
@@ -42,7 +43,7 @@ def test_expensive_models_and_client_are_cached(monkeypatch):
         e1 = embeddings_module.get_embeddings()
         e2 = embeddings_module.get_embeddings()
         assert e1 is e2
-        assert e1.batch_size == 32
+        assert e1.batch_size == 4
         assert e1.threads == 1
         assert emb_calls == 1
 
@@ -283,3 +284,59 @@ def test_summary_query_retrieves_multi_page_and_multi_doc_coverage(monkeypatch):
     assert len(contents) == len(set(contents))
     sources = {doc.metadata["source"] for doc in summary_results}
     assert sources == {"doc_a.pdf", "doc_b.docx"}
+
+
+def test_model_lifecycle_evicts_idle_sibling_but_protects_active_leases(monkeypatch):
+    embeddings_module.get_embeddings.cache_clear()
+    reranker_module.get_reranker.cache_clear()
+
+    try:
+        monkeypatch.setattr(embeddings_module, "FastEmbedEmbeddings", lambda **kw: SimpleNamespace(kind="emb", **kw))
+        monkeypatch.setattr(reranker_module, "TextCrossEncoder", lambda **kw: SimpleNamespace(kind="rerank", **kw))
+
+        # Idle sibling is evicted when loading the other model
+        e1 = embeddings_module.get_embeddings()
+        assert lifecycle_module.get_model_state("embeddings") == (True, 0)
+        r1 = reranker_module.get_reranker()
+        assert lifecycle_module.get_model_state("embeddings") == (False, 0)
+        assert lifecycle_module.get_model_state("reranker") == (True, 0)
+        assert r1.kind == "rerank"
+
+        # Active lease protects reranker from eviction during concurrent embeddings load
+        with reranker_module.reranker_lease():
+            assert lifecycle_module.clear_model("reranker") is False
+            e2 = embeddings_module.get_embeddings()
+            assert e2 is not e1
+            assert lifecycle_module.get_model_state("reranker") == (True, 1)
+            assert lifecycle_module.get_model_state("embeddings") == (True, 0)
+
+        # Active lease protects embeddings from eviction during concurrent reranker load
+        with embeddings_module.embeddings_lease():
+            assert lifecycle_module.clear_model("embeddings") is False
+            r2 = reranker_module.get_reranker()
+            assert r2 is r1
+            assert lifecycle_module.get_model_state("embeddings") == (True, 1)
+
+        # Once lease exits, idle sibling can be evicted normally
+        reranker_module.get_reranker.cache_clear()
+        _ = reranker_module.get_reranker()
+        assert lifecycle_module.get_model_state("embeddings") == (False, 0)
+    finally:
+        embeddings_module.get_embeddings.cache_clear()
+        reranker_module.get_reranker.cache_clear()
+
+
+def test_bm25_cache_is_bounded_to_three_entries():
+    bm25_module.invalidate_bm25_cache()
+    try:
+        for i in range(5):
+            docs = [
+                Document(
+                    page_content=f"Unique BM25 corpus entry {i}",
+                    metadata={"document_id": f"doc-{i}", "chunk_index": 0},
+                )
+            ]
+            bm25_module.create_bm25_retriever(docs, k=1)
+        assert len(bm25_module._bm25_cache) == 3
+    finally:
+        bm25_module.invalidate_bm25_cache()

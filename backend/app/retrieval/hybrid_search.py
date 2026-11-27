@@ -3,6 +3,7 @@ from pathlib import Path
 from qdrant_client.models import FieldCondition, Filter, MatchAny
 
 from app.retrieval.bm25_search import create_bm25_retriever
+from app.retrieval.embeddings import embeddings_lease
 from app.retrieval.vector_store import create_vector_store, get_all_documents
 
 _RRF_K = 60
@@ -98,13 +99,14 @@ def hybrid_search(query: str, k: int = 5):
     candidate_k = min(len(scoped_documents), max(k * 2, 12))
 
     # Dense semantic search
-    vector_store = create_vector_store()
-    dense_results = _dense_search_with_optional_filter(
-        vector_store,
-        query=query,
-        k=candidate_k,
-        target_sources=target_sources,
-    )
+    with embeddings_lease():
+        vector_store = create_vector_store()
+        dense_results = _dense_search_with_optional_filter(
+            vector_store,
+            query=query,
+            k=candidate_k,
+            target_sources=target_sources,
+        )
 
     # BM25 keyword search (reuses cached index per corpus)
     bm25_retriever = create_bm25_retriever(

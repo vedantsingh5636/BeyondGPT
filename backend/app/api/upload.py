@@ -1,3 +1,4 @@
+import gc
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -11,10 +12,9 @@ from qdrant_client.http.exceptions import ApiException
 
 from app.config import settings
 from app.ingestion.clean_documents import clean_documents
-from app.ingestion.github_loader import load_github_repo
 from app.ingestion.ingestion_pipeline import ingest_document
-from app.ingestion.web_loader import load_website
 from app.retrieval.chunking import split_documents
+from app.retrieval.model_lifecycle import clear_model
 from app.retrieval.vector_store import (
     add_documents_batched,
     create_vector_store,
@@ -70,7 +70,9 @@ async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
             )
         chunks.append(chunk)
 
-    return b"".join(chunks)
+    data = b"".join(chunks)
+    chunks.clear()
+    return data
 
 
 def _ingest_and_store_file(
@@ -79,6 +81,9 @@ def _ingest_and_store_file(
     file_hash: str,
     document_id: str,
 ) -> int:
+    # Free any idle reranker ONNX session before PDF extraction and embedding.
+    clear_model("reranker")
+
     chunks = ingest_document(file_path, source_name=safe_filename)
     if not chunks:
         raise ValueError("No extractable content chunks generated from document.")
@@ -92,9 +97,12 @@ def _ingest_and_store_file(
     )
 
     vector_store = create_vector_store()
-    add_documents_batched(vector_store, chunks, ids=chunk_ids, batch_size=64)
+    add_documents_batched(vector_store, chunks, ids=chunk_ids, batch_size=4)
+    chunk_count = len(chunks)
+    del chunks, chunk_ids
+    gc.collect()
     invalidate_document_cache()
-    return len(chunks)
+    return chunk_count
 
 
 @router.post("/upload", dependencies=[Depends(enforce_rate_limit)])
@@ -182,6 +190,9 @@ async def upload_document(file: Annotated[UploadFile, File()]):
             detail="Failed to save uploaded file.",
         ) from exc
 
+    # Release raw uploaded bytes immediately after persisting to disk.
+    del content
+
     try:
         chunks_created = await _run_blocking(
             _ingest_and_store_file,
@@ -226,6 +237,8 @@ async def upload_document(file: Annotated[UploadFile, File()]):
 
 
 def _ingest_website_sync(url: str) -> int:
+    from app.ingestion.web_loader import load_website
+
     documents = load_website(url)
     if not documents:
         raise ValueError("No content found on website.")
@@ -261,6 +274,8 @@ async def ingest_website(request: WebsiteRequest):
 
 
 def _ingest_github_sync(repo_url: str, branch: str) -> int:
+    from app.ingestion.github_loader import load_github_repo
+
     documents = load_github_repo(repo_url, branch=branch)
     if not documents:
         raise ValueError("No documents found in repository.")

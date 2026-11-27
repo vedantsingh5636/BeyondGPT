@@ -362,11 +362,11 @@ def test_find_document_by_hash_ordering_preserves_collection_and_avoids_duplicat
     assert len(existing_client.payload_indexes) == 4
 
 
-def test_add_documents_batched_uses_64_and_falls_back_for_simple_doubles():
+def test_add_documents_batched_uses_4_and_falls_back_for_simple_doubles():
     captured: list[tuple] = []
 
     class _BatchedStore:
-        def add_documents(self, docs, ids=None, batch_size=64):
+        def add_documents(self, docs, ids=None, batch_size=4):
             captured.append((len(docs), ids, batch_size))
             return ids or []
 
@@ -379,4 +379,75 @@ def test_add_documents_batched_uses_64_and_falls_back_for_simple_doubles():
     vs_module.add_documents_batched(_BatchedStore(), docs, ids=["id-1"])
     vs_module.add_documents_batched(_LegacyStore(), docs, ids=["id-2"])
 
-    assert captured == [(1, ["id-1"], 64), (1, ["id-2"], None)]
+    many_docs = [Document(page_content=f"Chunk {i}", metadata={"source": "m.pdf"}) for i in range(11)]
+    many_ids = [f"id-{i}" for i in range(11)]
+    batched_multi = _BatchedStore()
+    returned = vs_module.add_documents_batched(batched_multi, many_docs, ids=many_ids)
+
+    assert captured[:2] == [(1, ["id-1"], 4), (1, ["id-2"], None)]
+    assert [entry[0] for entry in captured[2:]] == [4, 4, 3]
+    assert returned == many_ids
+
+
+def test_ensure_collection_validates_dimension_and_distance_and_skips_redundant_qdrant_validation(monkeypatch):
+    from qdrant_client.models import Distance
+
+    bad_dim_client = SimpleNamespace(
+        collection_exists=lambda name: True,
+        get_collection=lambda collection_name: SimpleNamespace(
+            config=SimpleNamespace(
+                params=SimpleNamespace(
+                    vectors=SimpleNamespace(size=768, distance=Distance.COSINE)
+                )
+            )
+        ),
+        create_payload_index=lambda **kwargs: None,
+    )
+    vs_module._initialized_client_ids.discard(id(bad_dim_client))
+    try:
+        vs_module.ensure_collection_exists(bad_dim_client)
+        raise AssertionError("Expected ValueError for mismatched vector dimension")
+    except ValueError as exc:
+        assert "384" in str(exc)
+
+    bad_dist_client = SimpleNamespace(
+        collection_exists=lambda name: True,
+        get_collection=lambda collection_name: SimpleNamespace(
+            config=SimpleNamespace(
+                params=SimpleNamespace(
+                    vectors=SimpleNamespace(size=384, distance=Distance.DOT)
+                )
+            )
+        ),
+        create_payload_index=lambda **kwargs: None,
+    )
+    vs_module._initialized_client_ids.discard(id(bad_dist_client))
+    try:
+        vs_module.ensure_collection_exists(bad_dist_client)
+        raise AssertionError("Expected ValueError for mismatched vector distance")
+    except ValueError as exc:
+        assert "Cosine" in str(exc)
+
+    valid_client = SimpleNamespace(
+        collection_exists=lambda name: True,
+        get_collection=lambda collection_name: SimpleNamespace(
+            config=SimpleNamespace(
+                params=SimpleNamespace(
+                    vectors=SimpleNamespace(size=384, distance=Distance.COSINE)
+                )
+            )
+        ),
+        create_payload_index=lambda **kwargs: None,
+    )
+    captured_store_kwargs: list[dict] = []
+    monkeypatch.setattr(vs_module, "get_qdrant_client", lambda: valid_client)
+    monkeypatch.setattr(vs_module, "get_embeddings", lambda: SimpleNamespace(kind="emb"))
+    monkeypatch.setattr(
+        vs_module,
+        "QdrantVectorStore",
+        lambda **kwargs: captured_store_kwargs.append(kwargs) or SimpleNamespace(**kwargs),
+    )
+
+    vs_module._initialized_client_ids.discard(id(valid_client))
+    vs_module.create_vector_store()
+    assert captured_store_kwargs[0]["validate_collection_config"] is False

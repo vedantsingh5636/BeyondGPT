@@ -9,6 +9,7 @@ _SPLIT_SUBTOKEN_RE = re.compile(r"[._-]+")
 
 _bm25_lock = Lock()
 _bm25_cache: dict[tuple, BM25Retriever] = {}
+_MAX_BM25_CACHE_ENTRIES = 3
 
 
 def preprocess_bm25_text(text: str) -> list[str]:
@@ -59,8 +60,9 @@ def create_bm25_retriever(documents: list[Document], k: int = 5) -> BM25Retrieve
                 preprocess_func=preprocess_bm25_text,
             )
             # Keep bounded cache size to avoid unbounded memory growth on filtered subsets.
-            if len(_bm25_cache) >= 16:
-                _bm25_cache.clear()
+            while len(_bm25_cache) >= _MAX_BM25_CACHE_ENTRIES:
+                oldest_key = next(iter(_bm25_cache))
+                _bm25_cache.pop(oldest_key, None)
             _bm25_cache[key] = cached
 
     return cached.model_copy(update={"k": min(k, len(documents))})

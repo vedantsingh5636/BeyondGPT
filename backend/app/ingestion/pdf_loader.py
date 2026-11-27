@@ -1,3 +1,4 @@
+import gc
 import re
 from pathlib import Path
 
@@ -122,7 +123,15 @@ def load_pdf(
             empty_pages: list[int] = []
 
             for page_number, page in enumerate(pdf.pages, start=1):
-                content, table_count = _extract_page_content(page)
+                try:
+                    content, table_count = _extract_page_content(page)
+                finally:
+                    if hasattr(page, "flush_cache"):
+                        page.flush_cache()
+
+                if page_number % 10 == 0:
+                    gc.collect()
+
                 has_meaningful_text = bool(re.sub(r"\s+", "", content))
 
                 if not has_meaningful_text:
@@ -141,6 +150,10 @@ def load_pdf(
                         },
                     )
                 )
+            if hasattr(pdf, "flush_cache"):
+                pdf.flush_cache()
+        if total_pages >= 10:
+            gc.collect()
     except ValueError:
         raise
     except PDFPasswordIncorrect as exc:

@@ -1,3 +1,4 @@
+import gc
 import logging
 from functools import lru_cache
 from threading import Lock
@@ -18,7 +19,7 @@ from qdrant_client.models import (
 
 from app.config import settings
 from app.retrieval.bm25_search import invalidate_bm25_cache
-from app.retrieval.embeddings import get_embeddings
+from app.retrieval.embeddings import embeddings_lease, get_embeddings
 from app.utils.file_utils import generate_chunk_id
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,38 @@ def _ensure_payload_indexes(client: QdrantClient) -> None:
             logger.debug("Skipping payload index creation for %s: %s", field_name, exc)
 
 
+_VECTOR_DIMENSION = 384
+_VECTOR_DISTANCE = Distance.COSINE
+
+
+def _validate_existing_collection(client: QdrantClient) -> None:
+    """Verify existing collection vector dimension (384) and distance (Cosine)."""
+    if not hasattr(client, "get_collection"):
+        return
+
+    collection_info = client.get_collection(collection_name=COLLECTION_NAME)
+    params = getattr(getattr(collection_info, "config", None), "params", None)
+    vectors = getattr(params, "vectors", None)
+    if isinstance(vectors, dict):
+        vectors = vectors.get("")
+
+    if vectors is None:
+        return
+
+    size = getattr(vectors, "size", None)
+    distance = getattr(vectors, "distance", None)
+    if size is not None and size != _VECTOR_DIMENSION:
+        raise ValueError(
+            f"Existing Qdrant collection '{COLLECTION_NAME}' has vector size {size}, "
+            f"expected {_VECTOR_DIMENSION}."
+        )
+    if distance is not None and distance != _VECTOR_DISTANCE and str(distance).lower() != "cosine":
+        raise ValueError(
+            f"Existing Qdrant collection '{COLLECTION_NAME}' uses distance {distance}, "
+            f"expected {_VECTOR_DISTANCE.value}."
+        )
+
+
 def ensure_collection_exists(client: QdrantClient) -> None:
     """Create the Qdrant collection and metadata payload indexes if missing.
 
@@ -116,10 +149,12 @@ def ensure_collection_exists(client: QdrantClient) -> None:
         client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=VectorParams(
-                size=384,
-                distance=Distance.COSINE,
+                size=_VECTOR_DIMENSION,
+                distance=_VECTOR_DISTANCE,
             ),
         )
+    else:
+        _validate_existing_collection(client)
 
     _ensure_payload_indexes(client)
 
@@ -137,6 +172,7 @@ def create_vector_store() -> QdrantVectorStore:
         client=client,
         collection_name=COLLECTION_NAME,
         embedding=embeddings,
+        validate_collection_config=False,
     )
 
 
@@ -145,13 +181,36 @@ def add_documents_batched(
     documents: list[Document],
     *,
     ids: list[str] | None = None,
-    batch_size: int = 64,
+    batch_size: int = 4,
 ) -> list[str]:
-    """Upsert documents in bounded batches aligned with low-memory FastEmbed settings."""
-    try:
-        return vector_store.add_documents(documents, ids=ids, batch_size=batch_size)
-    except TypeError:
-        return vector_store.add_documents(documents, ids=ids)
+    """Upsert documents in explicit bounded batches aligned with low-memory FastEmbed settings."""
+    if not documents:
+        return []
+
+    effective_batch_size = batch_size if batch_size > 0 else len(documents)
+    added_ids: list[str] = []
+    total = len(documents)
+
+    with embeddings_lease():
+        for start in range(0, total, effective_batch_size):
+            end = start + effective_batch_size
+            batch_docs = documents[start:end]
+            batch_ids = ids[start:end] if ids is not None else None
+            try:
+                batch_result = vector_store.add_documents(
+                    batch_docs,
+                    ids=batch_ids,
+                    batch_size=effective_batch_size,
+                )
+            except TypeError:
+                batch_result = vector_store.add_documents(batch_docs, ids=batch_ids)
+            if batch_result:
+                added_ids.extend(batch_result)
+            del batch_docs, batch_ids, batch_result
+            if total > effective_batch_size:
+                gc.collect()
+
+    return added_ids
 
 
 def find_document_by_hash(
@@ -194,12 +253,13 @@ def enrich_chunks_metadata(
     document_id: str,
     saved_path: str | None = None,
 ) -> tuple[list[Document], list[str]]:
-    """Attach stable document metadata and deterministic point IDs to every chunk."""
-    enriched: list[Document] = []
+    """Attach stable document metadata and deterministic point IDs to every chunk in place."""
     chunk_ids: list[str] = []
 
     for idx, chunk in enumerate(chunks):
-        metadata = dict(chunk.metadata or {})
+        if chunk.metadata is None:
+            chunk.metadata = {}
+        metadata = chunk.metadata
         metadata["source"] = filename
         metadata["filename"] = filename
         metadata["document_id"] = document_id
@@ -208,15 +268,9 @@ def enrich_chunks_metadata(
         if saved_path is not None:
             metadata["saved_path"] = saved_path
 
-        enriched.append(
-            Document(
-                page_content=chunk.page_content,
-                metadata=metadata,
-            )
-        )
         chunk_ids.append(generate_chunk_id(document_id, idx))
 
-    return enriched, chunk_ids
+    return chunks, chunk_ids
 
 
 def _scroll_all_documents(qdrant: QdrantClient) -> list[Document]:

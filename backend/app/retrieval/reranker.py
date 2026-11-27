@@ -1,7 +1,10 @@
 import logging
+from contextlib import AbstractContextManager
 from functools import lru_cache
 
 from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+from app.retrieval.model_lifecycle import clear_model, get_or_load_model, model_lease
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +18,25 @@ _MAX_RELATIVE_SCORE_DROP = 6.5
 _LOW_SCORE_PRUNE_FLOOR = -6.0
 
 
-@lru_cache(maxsize=1)
-def get_reranker() -> TextCrossEncoder:
-    """Return a cached single-threaded FastEmbed ONNX TextCrossEncoder instance."""
+def _build_reranker() -> TextCrossEncoder:
     return TextCrossEncoder(
         model_name=ONNX_RERANKER_MODEL,
         threads=1,
+        enable_cpu_mem_arena=False,
     )
+
+
+def get_reranker() -> TextCrossEncoder:
+    """Return a cached single-threaded FastEmbed ONNX TextCrossEncoder instance."""
+    return get_or_load_model("reranker", _build_reranker, evict_other="embeddings")
+
+
+def reranker_lease() -> AbstractContextManager[None]:
+    """Hold an active-use lease on the reranker model during scoring."""
+    return model_lease("reranker")
+
+
+get_reranker.cache_clear = lambda: clear_model("reranker", force=True)  # type: ignore[attr-defined]
 
 
 @lru_cache(maxsize=1)
@@ -93,8 +108,9 @@ def rerank_documents(
     if not documents or top_k <= 0:
         return []
 
-    reranker = get_reranker()
-    scores = _score_documents(reranker, query, documents)
+    with reranker_lease():
+        reranker = get_reranker()
+        scores = _score_documents(reranker, query, documents)
     return _rank_and_prune_documents(documents, scores, top_k, prune_irrelevant_tail)
 
 
