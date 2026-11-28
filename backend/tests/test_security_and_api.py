@@ -178,6 +178,26 @@ def test_upload_handles_file_save_error_with_cors_and_qdrant_timeout_default(tmp
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
+def test_upload_cleans_up_temp_file_on_pdf_subprocess_error(tmp_path: Path, monkeypatch):
+    from app.ingestion.pdf_loader import PdfSubprocessError
+
+    monkeypatch.setattr(upload_api, "_run_blocking", _sync_run)
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setattr(upload_api, "find_document_by_hash", lambda h: None)
+    monkeypatch.setattr(
+        upload_api,
+        "ingest_document",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PdfSubprocessError("Child OOM killed")),
+    )
+
+    with pytest.raises(HTTPException) as exc_sub:
+        _run_coro(upload_api.upload_document(_FakeUploadFile("doc.pdf", _valid_pdf_bytes(), "application/pdf")))
+
+    assert exc_sub.value.status_code == 500
+    assert "failed to process uploaded pdf" in exc_sub.value.detail.lower()
+    assert list((tmp_path / "uploads").glob("*")) == []
+
+
 def test_ssrf_protection_blocks_internal_targets_and_allows_public_urls(monkeypatch):
     for bad_url in (
         "file:///etc/passwd",

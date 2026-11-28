@@ -2,11 +2,19 @@ import logging
 from contextlib import AbstractContextManager
 from functools import lru_cache
 
-from fastembed.rerank.cross_encoder import TextCrossEncoder
+from fastembed.rerank.cross_encoder import (
+    TextCrossEncoder as _FastEmbedTextCrossEncoder,
+)
 
-from app.retrieval.model_lifecycle import clear_model, get_or_load_model, model_lease
+from app.retrieval.model_lifecycle import (
+    clear_model,
+    configure_low_memory_onnx_session,
+    get_or_load_model,
+    model_lease,
+)
 
 logger = logging.getLogger(__name__)
+TextCrossEncoder = _FastEmbedTextCrossEncoder
 
 ONNX_RERANKER_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
 PYTORCH_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -19,6 +27,15 @@ _LOW_SCORE_PRUNE_FLOOR = -6.0
 
 
 def _build_reranker() -> TextCrossEncoder:
+    if TextCrossEncoder is _FastEmbedTextCrossEncoder:
+        reranker = _FastEmbedTextCrossEncoder(
+            model_name=ONNX_RERANKER_MODEL,
+            threads=1,
+            enable_cpu_mem_arena=False,
+            lazy_load=True,
+        )
+        configure_low_memory_onnx_session(reranker.model)
+        return reranker
     return TextCrossEncoder(
         model_name=ONNX_RERANKER_MODEL,
         threads=1,

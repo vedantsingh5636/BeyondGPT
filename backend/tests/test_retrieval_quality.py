@@ -340,3 +340,71 @@ def test_bm25_cache_is_bounded_to_three_entries():
         assert len(bm25_module._bm25_cache) == 3
     finally:
         bm25_module.invalidate_bm25_cache()
+
+
+def test_low_memory_onnx_session_options_trim_and_post_ingest_unload(monkeypatch):
+    from pathlib import Path
+
+    import onnxruntime as ort
+
+    from app.api import upload as upload_api
+
+    captured: dict[str, object] = {}
+    tokenizer_called = False
+
+    def fake_inference_session(model_path, providers=None, sess_options=None):
+        captured["model_path"] = model_path
+        captured["providers"] = providers
+        captured["sess_options"] = sess_options
+        return SimpleNamespace(kind="ort_session")
+
+    def fake_ensure_tokenizer():
+        nonlocal tokenizer_called
+        tokenizer_called = True
+
+    inner = SimpleNamespace(
+        _model_dir=Path("."),
+        model_description=SimpleNamespace(model_file="model_optimized.onnx", additional_files=[]),
+        model=None,
+        _ensure_tokenizer=fake_ensure_tokenizer,
+    )
+
+    monkeypatch.setattr(lifecycle_module.ort, "InferenceSession", fake_inference_session)
+    lifecycle_module.configure_low_memory_onnx_session(inner)
+
+    opts = captured["sess_options"]
+    assert captured["providers"] == ["CPUExecutionProvider"]
+    assert opts.graph_optimization_level == ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    assert opts.intra_op_num_threads == 1
+    assert opts.inter_op_num_threads == 1
+    assert opts.enable_cpu_mem_arena is False
+    assert opts.enable_mem_pattern is False
+    assert opts.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+    assert tokenizer_called is True
+    assert isinstance(lifecycle_module.trim_process_memory(), bool)
+
+    # Verify _ingest_and_store_file unloads idle embeddings, but preserves active concurrent lease
+    embeddings_module.get_embeddings.cache_clear()
+    try:
+        monkeypatch.setattr(embeddings_module, "FastEmbedEmbeddings", lambda **kw: SimpleNamespace(kind="emb", **kw))
+        monkeypatch.setattr(
+            upload_api,
+            "ingest_document",
+            lambda *a, **kw: [Document(page_content="Hello", metadata={"source": "a.pdf", "page": 1})],
+        )
+
+        class _FakeStore:
+            def add_documents(self, docs, ids=None, batch_size=4):
+                _ = embeddings_module.get_embeddings()
+                return ids or []
+
+        monkeypatch.setattr(upload_api, "create_vector_store", lambda: _FakeStore())
+
+        upload_api._ingest_and_store_file("dummy.pdf", "a.pdf", "h" * 64, "doc-1")
+        assert lifecycle_module.get_model_state("embeddings") == (False, 0)
+
+        with embeddings_module.embeddings_lease():
+            upload_api._ingest_and_store_file("dummy.pdf", "a.pdf", "h" * 64, "doc-1")
+            assert lifecycle_module.get_model_state("embeddings") == (True, 1)
+    finally:
+        embeddings_module.get_embeddings.cache_clear()

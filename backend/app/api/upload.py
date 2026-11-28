@@ -1,4 +1,3 @@
-import gc
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -13,8 +12,9 @@ from qdrant_client.http.exceptions import ApiException
 from app.config import settings
 from app.ingestion.clean_documents import clean_documents
 from app.ingestion.ingestion_pipeline import ingest_document
+from app.ingestion.pdf_loader import PdfSubprocessError
 from app.retrieval.chunking import split_documents
-from app.retrieval.model_lifecycle import clear_model
+from app.retrieval.model_lifecycle import clear_model, trim_process_memory
 from app.retrieval.vector_store import (
     add_documents_batched,
     create_vector_store,
@@ -97,10 +97,15 @@ def _ingest_and_store_file(
     )
 
     vector_store = create_vector_store()
-    add_documents_batched(vector_store, chunks, ids=chunk_ids, batch_size=4)
-    chunk_count = len(chunks)
-    del chunks, chunk_ids
-    gc.collect()
+    try:
+        add_documents_batched(vector_store, chunks, ids=chunk_ids, batch_size=4)
+        chunk_count = len(chunks)
+    finally:
+        del chunks, chunk_ids
+        # Release embeddings if idle so 512 MB containers stay lean between requests;
+        # active concurrent leases are never evicted.
+        clear_model("embeddings")
+        trim_process_memory()
     invalidate_document_cache()
     return chunk_count
 
@@ -217,6 +222,13 @@ async def upload_document(file: Annotated[UploadFile, File()]):
     except ValueError as exc:
         Path(file_path).unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PdfSubprocessError:
+        Path(file_path).unlink(missing_ok=True)
+        logger.exception("PDF extraction subprocess failed for '%s'", safe_filename)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process uploaded PDF.",
+        ) from None
     except HTTPException:
         Path(file_path).unlink(missing_ok=True)
         raise

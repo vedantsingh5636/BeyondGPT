@@ -5,7 +5,12 @@ from langchain_community.embeddings.fastembed import (
     FastEmbedEmbeddings as _LangChainFastEmbedEmbeddings,
 )
 
-from app.retrieval.model_lifecycle import clear_model, get_or_load_model, model_lease
+from app.retrieval.model_lifecycle import (
+    clear_model,
+    configure_low_memory_onnx_session,
+    get_or_load_model,
+    model_lease,
+)
 
 FastEmbedEmbeddings = _LangChainFastEmbedEmbeddings
 
@@ -16,7 +21,9 @@ def _build_embeddings() -> _LangChainFastEmbedEmbeddings:
             model_name="BAAI/bge-small-en-v1.5",
             threads=1,
             enable_cpu_mem_arena=False,
+            lazy_load=True,
         )
+        configure_low_memory_onnx_session(model.model)
         return _LangChainFastEmbedEmbeddings.model_construct(
             model_name="BAAI/bge-small-en-v1.5",
             max_length=512,

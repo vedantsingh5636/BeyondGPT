@@ -335,3 +335,62 @@ def test_load_pdf_skips_find_tables_on_text_only_pages_and_keeps_table_pages(tmp
     assert docs[0].metadata["page"] == 1
     assert "| ColA | ColB |\n| --- | --- |\n| Val1 | Val2 |" in docs[1].page_content
     assert docs[1].metadata["page"] == 2
+
+
+def test_load_pdf_in_subprocess_handles_errors_and_timeouts(monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    from app.ingestion import pdf_loader
+    from app.utils.file_utils import DocumentLimitError
+
+    # 1. Non-zero exit code (e.g. OOM SIGKILL) raises PdfSubprocessError
+    monkeypatch.setattr(
+        pdf_loader.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=137, stdout="", stderr="Killed"),
+    )
+    with pytest.raises(pdf_loader.PdfSubprocessError, match="exited with code 137"):
+        pdf_loader.load_pdf_in_subprocess("dummy.pdf")
+
+    # 2. Timeout raises PdfSubprocessError
+    def timeout_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="python", timeout=5)
+
+    monkeypatch.setattr(pdf_loader.subprocess, "run", timeout_run)
+    with pytest.raises(pdf_loader.PdfSubprocessError, match="timed out"):
+        pdf_loader.load_pdf_in_subprocess("dummy.pdf", timeout_seconds=5)
+
+    # 3. Invalid JSON raises PdfSubprocessError
+    monkeypatch.setattr(
+        pdf_loader.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="not-json", stderr=""),
+    )
+    with pytest.raises(pdf_loader.PdfSubprocessError, match="invalid JSON"):
+        pdf_loader.load_pdf_in_subprocess("dummy.pdf")
+
+    # 4. Structured DocumentLimitError and ValueError are reconstructed faithfully
+    monkeypatch.setattr(
+        pdf_loader.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout='{"ok": false, "error_type": "DocumentLimitError", "detail": "Too many pages"}',
+            stderr="",
+        ),
+    )
+    with pytest.raises(DocumentLimitError, match="Too many pages"):
+        pdf_loader.load_pdf_in_subprocess("dummy.pdf")
+
+    monkeypatch.setattr(
+        pdf_loader.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout='{"ok": false, "error_type": "ValueError", "detail": "Corrupt PDF"}',
+            stderr="",
+        ),
+    )
+    with pytest.raises(ValueError, match="Corrupt PDF"):
+        pdf_loader.load_pdf_in_subprocess("dummy.pdf")

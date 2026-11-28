@@ -20,6 +20,7 @@ from qdrant_client.models import (
 from app.config import settings
 from app.retrieval.bm25_search import invalidate_bm25_cache
 from app.retrieval.embeddings import embeddings_lease, get_embeddings
+from app.retrieval.model_lifecycle import trim_process_memory
 from app.utils.file_utils import generate_chunk_id
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ def add_documents_batched(
                 added_ids.extend(batch_result)
             del batch_docs, batch_ids, batch_result
             if total > effective_batch_size:
-                gc.collect()
+                trim_process_memory()
 
     return added_ids
 
